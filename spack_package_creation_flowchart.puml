@@ -1,0 +1,66 @@
+@startuml Spack Package Creation Process
+
+start
+
+:Receive package request;
+
+:Check if recipe exists in packages/ (py-/r- prefix for Python/R);
+
+if (Recipe exists?) then (yes)
+  if (Need specific version?) then (yes)
+    :Run spack versions {pkg};
+    :Run spack checksum -b {pkg};
+    :Modify recipe with new version;
+  else (no)
+    :Use existing recipe;
+  endif
+else (no)
+  if (Prompt contains URL?) then (yes)
+    :Visit and review URL content;
+  endif
+  
+  if (Python package?) then (yes)
+    :Run PyPackageCreator.py;
+    
+    if (PyPI creation successful?) then (yes)
+      :Copy packages to spack-repo;
+    else (no)
+      :Continue to check official repo;
+    endif
+  else (no)
+    :Continue to check official repo;
+  endif
+  
+  :Run create function (copies from official repo);
+  
+  if (Found in official Spack?) then (yes)
+    :Use official recipe as base;
+  else (no)
+    if (Has releases/tags?) then (yes)
+      :Create recipe from release archive;
+    else (no)
+      :Create recipe from commit SHA;
+    endif
+  endif
+  
+  :Gather info and modify recipe;
+endif
+
+repeat
+  :Run spack install {pkg};
+  
+  if (Build successful?) then (no)
+    :Fix recipe based on errors;
+  else (yes)
+    :Run validation with singularity;
+    
+    if (Validation successful?) then (no)
+      :Uninstall and fix recipe;
+    else (yes)
+      :Create PR and wait for validation;
+      stop
+    endif
+  endif
+repeat while (Installation or validation failed?)
+
+@enduml 

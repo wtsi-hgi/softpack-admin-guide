@@ -1,0 +1,930 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Spack Package Creation Wizard</title>
+    <script>
+        // Define the wizard app function before Alpine.js loads
+        window.wizardApp = function() {
+            return {
+                currentStep: 1,
+                totalSteps: 6,
+                
+                // Package info
+                packageName: '',
+                packageType: 'python',
+                packageUrl: '',
+                
+                // Workflow state
+                recipeExists: '',
+                recipeChecking: false,
+                needsSpecificVersion: '',
+                newVersion: '',
+                pypiSuccess: '',
+                foundInOfficial: '',
+                officialChecking: false,
+                hasReleases: '',
+                releaseUrl: '',
+                repoUrl: '',
+                buildSuccess: '',
+                validationSuccess: '',
+                prUrl: '',
+                
+                // Modifications
+                modifications: {
+                    dependencies: false,
+                    optional: false,
+                    patches: false,
+                    buildFlags: false,
+                    classType: false
+                },
+                
+                getRecipeName() {
+                    const prefixes = { python: 'py-', r: 'r-', other: '' };
+                    return prefixes[this.packageType] + this.packageName;
+                },
+                
+                getValidationScript() {
+                    const scripts = {
+                        python: `python -c "import ${this.packageName}"`,
+                        r: `Rscript -e "library(${this.packageName})"`,
+                        other: '# Check package documentation for validation'
+                    };
+                    return scripts[this.packageType];
+                },
+                
+                canProceed() {
+                    switch(this.currentStep) {
+                        case 1: return this.packageName.trim() !== '';
+                        case 2: return this.recipeExists !== '' && this.recipeExists !== 'manual' && !this.recipeChecking;
+                        case 3: 
+                            if (this.recipeExists === 'yes') {
+                                return this.needsSpecificVersion !== '';
+                            } else {
+                                if (this.packageType === 'python') {
+                                    return this.pypiSuccess !== '' && 
+                                           (this.pypiSuccess === 'yes' || this.foundInOfficial !== '');
+                                } else {
+                                    return this.foundInOfficial !== '' &&
+                                           (this.foundInOfficial === 'yes' || this.hasReleases !== '');
+                                }
+                            }
+                        case 4: return true; // Always can proceed from modifications
+                        case 5: return this.buildSuccess === 'yes' && this.validationSuccess === 'yes';
+                        case 6: return true;
+                        default: return false;
+                    }
+                },
+                
+                nextStep() {
+                    if (this.canProceed() && this.currentStep < this.totalSteps) {
+                        this.currentStep++;
+                        
+                        // Auto-check recipe existence when entering step 2
+                        if (this.currentStep === 2) {
+                            this.checkRecipeExists();
+                        }
+                        
+                        // Auto-check official recipe when entering step 3 for new recipes
+                        if (this.currentStep === 3 && this.recipeExists === 'no') {
+                            this.checkOfficialRecipe();
+                        }
+                        
+                        // Skip step 3 version check if recipe doesn't exist or skip to step 4 if using existing
+                        if (this.currentStep === 3 && this.recipeExists === 'no') {
+                            // Stay at step 3 for new recipe creation
+                        } else if (this.currentStep === 3 && this.recipeExists === 'yes' && this.needsSpecificVersion === 'no') {
+                            this.currentStep = 4; // Skip to modifications
+                        } else if (this.currentStep === 4 && this.recipeExists === 'yes' && this.needsSpecificVersion === 'no') {
+                            this.currentStep = 5; // Skip to build
+                        }
+                    }
+                },
+                
+                previousStep() {
+                    if (this.currentStep > 1) {
+                        this.currentStep--;
+                    }
+                },
+                
+                async copyToClipboard(text) {
+                    try {
+                        await navigator.clipboard.writeText(text);
+                        // Could add a toast notification here
+                    } catch (err) {
+                        console.error('Failed to copy text: ', err);
+                    }
+                },
+                
+                async checkRecipeExists() {
+                    if (!this.packageName.trim()) return;
+                    
+                    this.recipeChecking = true;
+                    const recipeName = this.getRecipeName();
+                    
+                    // Use GitHub's public API with proper headers
+                    const url = `https://api.github.com/repos/wtsi-hgi/spack-repo/contents/packages/${recipeName}/package.py`;
+                    
+                    try {
+                        const response = await fetch(url, {
+                            method: 'GET',
+                            headers: {
+                                'Accept': 'application/vnd.github.v3+json',
+                                'User-Agent': 'Spack-Package-Wizard'
+                            }
+                        });
+                        
+                        if (response.status === 200) {
+                            this.recipeExists = 'yes';
+                        } else if (response.status === 404) {
+                            this.recipeExists = 'no';
+                        } else {
+                            // For other status codes, default to no
+                            this.recipeExists = 'no';
+                        }
+                    } catch (error) {
+                        console.error('Error checking recipe existence:', error);
+                        // Fallback: show manual check option
+                        this.recipeExists = 'manual';
+                    } finally {
+                        this.recipeChecking = false;
+                    }
+                },
+                
+                async checkOfficialRecipe() {
+                    if (!this.packageName.trim()) return;
+                    
+                    this.officialChecking = true;
+                    
+                    // Use GitHub's public API to check official Spack repository
+                    const url = `https://api.github.com/repos/spack/spack-packages/contents/repos/spack_repo/builtin/packages/${this.packageName}/package.py`;
+                    
+                    try {
+                        const response = await fetch(url, {
+                            method: 'GET',
+                            headers: {
+                                'Accept': 'application/vnd.github.v3+json',
+                                'User-Agent': 'Spack-Package-Wizard'
+                            }
+                        });
+                        
+                        if (response.status === 200) {
+                            this.foundInOfficial = 'yes';
+                        } else if (response.status === 404) {
+                            this.foundInOfficial = 'no';
+                        } else {
+                            // For other status codes, default to no
+                            this.foundInOfficial = 'no';
+                        }
+                    } catch (error) {
+                        console.error('Error checking official recipe existence:', error);
+                        // Fallback: default to no
+                        this.foundInOfficial = 'no';
+                    } finally {
+                        this.officialChecking = false;
+                    }
+                },
+                
+                getValidationCommand() {
+                    return `singularity exec --bind /mnt/data /home/ubuntu/spack.sif bash -c 'source <(/opt/spack/bin/spack load --sh ${this.getRecipeName()}); ${this.getValidationScript()}'`;
+                },
+                
+                getValidationCommandWithSelection() {
+                    return `# Replace HASH with one of the hashes from the error message (e.g., /tkodior)
+singularity exec --bind /mnt/data /home/ubuntu/spack.sif bash -c 'source <(/opt/spack/bin/spack load --sh /HASH); ${this.getValidationScript()}'`;
+                },
+                
+                getPrCommands() {
+                    return `git checkout -b add-${this.packageName}-recipe
+git add .
+git commit -m "Add ${this.getRecipeName()} recipe"
+git push origin add-${this.packageName}-recipe`;
+                },
+                
+                getCommitCommands() {
+                    return `spack create --skip-editor ${this.getRecipeName()}
+rm -rf /tmp/scratch
+git clone ${this.repoUrl} /tmp/scratch
+cd /tmp/scratch
+COMMIT=$(git log -1 --format='%H')
+DATE=$(git log -1 --format='%cd' --date=format:'%Y%m%d')
+cd -
+echo "# Add to recipe at ~/spack-repo/packages/${this.getRecipeName()}/package.py"
+echo "version(\\"$DATE\\", commit=\\"$COMMIT\\")"`;
+                },
+                
+                getPyPackageCreatorCommand() {
+                    return `cd ~/r-spack-recipe-builder
+./PyPackageCreator.py -f ${this.packageName}`;
+                }
+            }
+        }
+    </script>
+    <script src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            margin: 0;
+            padding: 40px 20px;
+            background-color: #fafafa;
+            color: #333;
+            line-height: 1.6;
+        }
+        
+        .header {
+            background: white;
+            color: #333;
+            padding: 40px 0;
+            margin-bottom: 40px;
+            border-bottom: 1px solid #e0e0e0;
+            text-align: center;
+        }
+        
+        .header h1 {
+            font-weight: 300;
+            font-size: 2.5rem;
+            margin: 0 0 10px 0;
+            letter-spacing: -0.5px;
+        }
+        
+        .header p {
+            font-weight: 400;
+            color: #666;
+            margin: 0;
+            font-size: 1.1rem;
+        }
+        
+        .wizard-container {
+            background: white;
+            padding: 60px;
+            max-width: 800px;
+            margin: 0 auto;
+            border: 1px solid #e0e0e0;
+        }
+        
+        .progress-bar {
+            background: #f0f0f0;
+            height: 2px;
+            margin-bottom: 60px;
+            overflow: hidden;
+        }
+        
+        .progress-fill {
+            background: #333;
+            height: 100%;
+            transition: width 0.3s ease;
+        }
+        
+        .step {
+            display: none;
+        }
+        
+        .step.active {
+            display: block;
+            animation: fadeIn 0.3s ease;
+        }
+        
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        
+        .input-group {
+            margin-bottom: 20px;
+        }
+        
+        label {
+            display: block;
+            margin-bottom: 8px;
+            font-weight: 500;
+            color: #666;
+            font-size: 14px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+        
+        input[type="text"], input[type="url"], select, textarea {
+            width: 100%;
+            padding: 12px 0;
+            border: none;
+            border-bottom: 1px solid #e0e0e0;
+            font-size: 16px;
+            transition: border-color 0.2s ease;
+            box-sizing: border-box;
+            background: transparent;
+        }
+        
+        input:focus, select:focus, textarea:focus {
+            outline: none;
+            border-bottom-color: #333;
+        }
+        
+        .btn {
+            background: #333;
+            color: white;
+            border: 1px solid #333;
+            padding: 12px 24px;
+            cursor: pointer;
+            font-size: 14px;
+            font-weight: 500;
+            transition: all 0.2s ease;
+            margin-right: 10px;
+        }
+        
+        .btn:hover {
+            background: white;
+            color: #333;
+        }
+        
+        .btn-secondary {
+            background: white;
+            color: #333;
+            border-color: #ccc;
+        }
+        
+        .btn-secondary:hover {
+            background: #f5f5f5;
+        }
+        
+        .btn-success {
+            background: #28a745;
+            border-color: #28a745;
+        }
+        
+        .btn-success:hover {
+            background: white;
+            color: #28a745;
+        }
+        
+        .btn-warning {
+            background: #ffc107;
+            color: #333;
+            border-color: #ffc107;
+        }
+        
+        .btn-warning:hover {
+            background: white;
+        }
+        
+        .command-box {
+            background: #f8f9fa;
+            border: 1px solid #e0e0e0;
+            padding: 20px;
+            font-family: 'SF Mono', Monaco, 'Cascadia Code', 'Roboto Mono', Consolas, 'Courier New', monospace;
+            font-size: 14px;
+            margin: 20px 0;
+            position: relative;
+        }
+        
+        .command-box span {
+            display: block;
+            padding-right: 80px;
+            line-height: 1.5;
+        }
+        
+        .copy-btn {
+            position: absolute;
+            top: 15px;
+            right: 15px;
+            background: #333;
+            color: white;
+            border: 1px solid #333;
+            padding: 6px 12px;
+            cursor: pointer;
+            font-size: 12px;
+            font-weight: 500;
+            transition: all 0.2s ease;
+        }
+        
+        .copy-btn:hover {
+            background: white;
+            color: #333;
+        }
+        
+        .info-box {
+            background: #f8f9fa;
+            border-left: 4px solid #333;
+            padding: 20px;
+            margin: 20px 0;
+        }
+        
+        .warning-box {
+            background: #fff8e1;
+            border-left: 4px solid #ffc107;
+            padding: 20px;
+            margin: 20px 0;
+        }
+        
+        .success-box {
+            background: #f1f8e9;
+            border-left: 4px solid #28a745;
+            padding: 20px;
+            margin: 20px 0;
+        }
+        
+        .radio-group {
+            display: flex;
+            gap: 15px;
+            flex-wrap: wrap;
+        }
+        
+        .radio-option {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        
+        .checkbox-group {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin: 10px 0;
+        }
+        
+        .step-title {
+            color: #333;
+            border-bottom: 1px solid #e0e0e0;
+            padding-bottom: 15px;
+            margin-bottom: 30px;
+            font-weight: 500;
+        }
+        
+        .navigation {
+            display: flex;
+            justify-content: space-between;
+            margin-top: 60px;
+            padding-top: 30px;
+            border-top: 1px solid #e0e0e0;
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>Spack Package Creation Guide</h1>
+        <p>Step-by-step workflow for creating Spack packages</p>
+    </div>
+    
+    <div class="wizard-container" x-data="wizardApp()">
+        <!-- Progress Bar -->
+        <div class="progress-bar">
+            <div class="progress-fill" :style="`width: ${(currentStep / totalSteps) * 100}%`"></div>
+        </div>
+        
+        <!-- Step 1: Package Information -->
+        <div class="step" :class="{ active: currentStep === 1 }">
+            <h2 class="step-title">Step 1: Package Information</h2>
+            
+            <div class="input-group">
+                <label for="packageName">Package Name:</label>
+                <input type="text" id="packageName" x-model="packageName" 
+                       placeholder="e.g., numpy, ggplot2, cmake, fastapi" />
+            </div>
+            
+            <div class="input-group">
+                <label for="packageType">Package Type:</label>
+                <select id="packageType" x-model="packageType">
+                    <option value="python">Python Package</option>
+                    <option value="r">R Package</option>
+                    <option value="other">Other Package</option>
+                </select>
+            </div>
+            
+            <div class="input-group" x-show="packageName">
+                <label>Optional: Package URL (if known):</label>
+                <input type="url" x-model="packageUrl" 
+                       placeholder="https://github.com/owner/repo or https://pypi.org/project/package" />
+            </div>
+            
+            <div class="warning-box">
+                <strong>⚠️ Access Required:</strong><br>
+                Before proceeding, you need to:
+                <br><br>
+                1. Contact <strong>eh19 (Eric)</strong> to gain access to the build VM<br>
+                2. Provide your <strong>public SSH key</strong> to Eric<br>
+                3. SSH to the build VM:
+                <div class="command-box">
+                    <button class="copy-btn" @click="copyToClipboard('ssh ubuntu@softpack-build-dev.hgi.sanger.ac.uk')">Copy</button>
+                    <span>ssh ubuntu@softpack-build-dev.hgi.sanger.ac.uk</span>
+                </div>
+                <br>
+                Only proceed with the following steps after you have access to the build VM.
+            </div>
+            
+            <div class="info-box" x-show="packageName">
+                <strong>Configuration:</strong><br>
+                Package Name: <strong x-text="packageName"></strong><br>
+                Package Type: <strong x-text="packageType"></strong><br>
+                Spack Recipe Name: <strong x-text="getRecipeName()"></strong>
+            </div>
+        </div>
+        
+        <!-- Step 2: Recipe Existence Check -->
+        <div class="step" :class="{ active: currentStep === 2 }">
+            <h2 class="step-title">Step 2: Check if Recipe Exists</h2>
+            
+            <div class="info-box">
+                Checking if a recipe already exists in the spack-repo...
+            </div>
+            
+            <div x-show="recipeChecking" class="info-box">
+                <div style="display: flex; align-items: center; gap: 10px;">
+                    <div style="width: 20px; height: 20px; border: 2px solid #667eea; border-top: 2px solid transparent; border-radius: 50%; animation: spin 1s linear infinite;"></div>
+                    Checking GitHub repository for <strong x-text="getRecipeName()"></strong>...
+                </div>
+            </div>
+            
+            <div x-show="!recipeChecking && recipeExists === 'yes'" class="success-box">
+                ✅ Recipe found! The package <strong x-text="getRecipeName()"></strong> already exists in the spack-repo.
+                <br><br>
+                <strong>GitHub URL:</strong> <a :href="'https://github.com/wtsi-hgi/spack-repo/tree/main/packages/' + getRecipeName() + '/package.py'" target="_blank" style="color: #28a745;">View Recipe</a>
+            </div>
+            
+            <div x-show="!recipeChecking && recipeExists === 'no'" class="warning-box">
+                ❌ Recipe not found. The package <strong x-text="getRecipeName()"></strong> doesn't exist in the spack-repo yet.
+                <br><br>
+                We'll need to create a new recipe for this package.
+            </div>
+            
+            <div x-show="!recipeChecking && recipeExists === 'manual'" class="info-box">
+                ⚠️ Unable to automatically check recipe existence due to network restrictions.
+                <br><br>
+                Please manually check if the recipe exists:
+                <div class="command-box">
+                    <button class="copy-btn" @click="copyToClipboard('ls packages/' + getRecipeName() + '/')">Copy</button>
+                    <span x-text="'ls packages/' + getRecipeName() + '/'"></span>
+                </div>
+                
+                <div class="input-group">
+                    <label>Does the recipe exist?</label>
+                    <div class="radio-group">
+                        <div class="radio-option">
+                            <input type="radio" id="exists-yes" x-model="recipeExists" value="yes" />
+                            <label for="exists-yes">Yes, recipe exists</label>
+                        </div>
+                        <div class="radio-option">
+                            <input type="radio" id="exists-no" x-model="recipeExists" value="no" />
+                            <label for="exists-no">No, recipe doesn't exist</label>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+
+        </div>
+        
+        <!-- Step 3a: Existing Recipe - Version Check -->
+        <div class="step" :class="{ active: currentStep === 3 && recipeExists === 'yes' }">
+            <h2 class="step-title">Step 3: Recipe Exists - Version Management</h2>
+            
+            <div class="input-group">
+                <label>Do you need a specific version?</label>
+                <div class="radio-group">
+                    <div class="radio-option">
+                        <input type="radio" id="version-yes" x-model="needsSpecificVersion" value="yes" />
+                        <label for="version-yes">Yes, need specific version</label>
+                    </div>
+                    <div class="radio-option">
+                        <input type="radio" id="version-no" x-model="needsSpecificVersion" value="no" />
+                        <label for="version-no">No, use existing</label>
+                    </div>
+                </div>
+            </div>
+            
+            <div x-show="needsSpecificVersion === 'yes'">
+                <div class="info-box">
+                    Run these commands to add a new version:
+                </div>
+                
+                <div class="command-box">
+                    <button class="copy-btn" @click="copyToClipboard('spack versions ' + getRecipeName())">Copy</button>
+                    <span x-text="'spack versions ' + getRecipeName()"></span>
+                </div>
+                
+                <div class="command-box">
+                    <button class="copy-btn" @click="copyToClipboard('spack checksum -b ' + getRecipeName())">Copy</button>
+                    <span x-text="'spack checksum -b ' + getRecipeName()"></span>
+                </div>
+                
+                <div class="input-group">
+                    <label for="newVersion">New Version:</label>
+                    <input type="text" id="newVersion" x-model="newVersion" 
+                           placeholder="e.g., 1.2.3" />
+                </div>
+                
+                <div class="warning-box">
+                    <strong>Manual Step:</strong> Edit the recipe file to add the new version and SHA256 checksum from the output above.
+                </div>
+            </div>
+            
+            <div x-show="needsSpecificVersion === 'no'">
+                <div class="success-box">
+                    ✅ Great! You can use the existing recipe as-is. Proceed to installation testing.
+                </div>
+            </div>
+        </div>
+        
+        <!-- Step 3b: New Recipe Creation -->
+        <div class="step" :class="{ active: currentStep === 3 && recipeExists === 'no' }">
+            <h2 class="step-title">Step 3: Create New Recipe</h2>
+            
+            <div x-show="packageType === 'python'">
+                <div class="info-box">
+                    For Python packages, we'll try the automated PyPackageCreator first:
+                </div>
+                
+                <div class="command-box">
+                    <button class="copy-btn" @click="copyToClipboard(getPyPackageCreatorCommand())">Copy</button>
+                    <span style="white-space: pre-line;" x-text="getPyPackageCreatorCommand()"></span>
+                </div>
+                
+                <div class="input-group">
+                    <label>Was PyPI creation successful?</label>
+                    <div class="radio-group">
+                        <div class="radio-option">
+                            <input type="radio" id="pypi-yes" x-model="pypiSuccess" value="yes" />
+                            <label for="pypi-yes">Yes, created successfully</label>
+                        </div>
+                        <div class="radio-option">
+                            <input type="radio" id="pypi-no" x-model="pypiSuccess" value="no" />
+                            <label for="pypi-no">No, failed or incomplete</label>
+                        </div>
+                    </div>
+                </div>
+                
+                <div x-show="pypiSuccess === 'yes'">
+                    <div class="command-box">
+                        <button class="copy-btn" @click="copyToClipboard($event.target.previousSibling.textContent)">Copy</button>del_empty
+mv ~/r-spack-recipe-builder/packages/py-* ~/spack-repo/packages
+                    </div>
+                </div>
+            </div>
+            
+            <div x-show="packageType !== 'python' || pypiSuccess === 'no'">
+                <div class="info-box">
+                    Let's check the official Spack repository and create a recipe:
+                </div>
+                
+                <div x-show="officialChecking" class="info-box">
+                    <div style="display: flex; align-items: center; gap: 10px;">
+                        <div style="width: 20px; height: 20px; border: 2px solid #667eea; border-top: 2px solid transparent; border-radius: 50%; animation: spin 1s linear infinite;"></div>
+                        Checking official Spack repository for <strong x-text="packageName"></strong>...
+                    </div>
+                </div>
+                
+                <div x-show="!officialChecking && foundInOfficial === 'yes'" class="success-box">
+                    ✅ Package found in official Spack repository! The create command will copy the existing recipe.
+                </div>
+                
+                <div x-show="!officialChecking && foundInOfficial === 'no'" class="warning-box">
+                    ❌ Package not found in official Spack repository. You'll need to create a recipe manually.
+                </div>
+                
+                <div x-show="foundInOfficial === 'yes'" class="command-box">
+                    <button class="copy-btn" @click="copyToClipboard('create ' + getRecipeName())">Copy</button>
+                    <span x-text="'create ' + getRecipeName()"></span>
+                </div>
+                
+                <div x-show="foundInOfficial === 'yes'">
+                    <div class="success-box">
+                        ✅ Excellent! The official recipe has been copied as a base. You can modify it as needed.
+                        <br><br>
+                        <strong>Official Recipe URL:</strong> <a :href="'https://github.com/spack/spack-packages/blob/develop/repos/spack_repo/builtin/packages/' + packageName + '/package.py'" target="_blank" style="color: #28a745;">View Official Recipe</a>
+                    </div>
+                </div>
+                
+                <div x-show="foundInOfficial === 'no'">
+                    <div class="input-group">
+                        <label>Does the project have GitHub releases/tags?</label>
+                        <div class="radio-group">
+                            <div class="radio-option">
+                                <input type="radio" id="releases-yes" x-model="hasReleases" value="yes" />
+                                <label for="releases-yes">Yes, has releases</label>
+                            </div>
+                            <div class="radio-option">
+                                <input type="radio" id="releases-no" x-model="hasReleases" value="no" />
+                                <label for="releases-no">No releases, use commit</label>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div x-show="hasReleases === 'yes'">
+                        <div class="input-group">
+                            <label for="releaseUrl">Release Archive URL:</label>
+                            <input type="url" id="releaseUrl" x-model="releaseUrl" 
+                                   placeholder="https://github.com/owner/repo/archive/refs/tags/v1.0.0.tar.gz" />
+                        </div>
+                        
+                        <div class="command-box" x-show="releaseUrl">
+                            <button class="copy-btn" @click="copyToClipboard('spack create --skip-editor -b ' + releaseUrl)">Copy</button>
+                            <span x-text="'spack create --skip-editor -b ' + releaseUrl"></span>
+                        </div>
+                    </div>
+                    
+                    <div x-show="hasReleases === 'no'">
+                        <div class="input-group">
+                            <label for="repoUrl">Repository URL:</label>
+                            <input type="url" id="repoUrl" x-model="repoUrl" 
+                                   placeholder="https://github.com/owner/repo" />
+                        </div>
+                        
+                        <div class="command-box" x-show="repoUrl">
+                            <button class="copy-btn" @click="copyToClipboard(getCommitCommands())">Copy</button>
+                            <span style="white-space: pre-line;" x-text="getCommitCommands()"></span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Step 4: Recipe Modification -->
+        <div class="step" :class="{ active: currentStep === 4 }">
+            <h2 class="step-title">Step 4: Gather Info and Modify Recipe</h2>
+            
+            <div class="info-box">
+                Now you need to research the package and add proper dependencies to the recipe.
+            </div>
+            
+            <div class="warning-box">
+                <strong>Study Examples:</strong><br>
+                • Python: <a href="https://github.com/wtsi-hgi/spack-repo/tree/main/packages/py-agate/package.py" target="_blank" style="color: #333; text-decoration: underline;"><code>py-agate</code></a><br>
+                • R: <a href="https://github.com/wtsi-hgi/spack-repo/tree/main/packages/r-archr/package.py" target="_blank" style="color: #333; text-decoration: underline;"><code>r-archr</code></a>, <a href="https://github.com/wtsi-hgi/spack-repo/tree/main/packages/r-plotlistr/package.py" target="_blank" style="color: #333; text-decoration: underline;"><code>r-plotlistr</code></a><br>
+                • Other: <a href="https://github.com/wtsi-hgi/spack-repo/tree/main/packages/samtools/package.py" target="_blank" style="color: #333; text-decoration: underline;"><code>samtools</code></a><br><br>
+                Look in the <code>examples/</code> folder for guidance.
+            </div>
+            
+            <div x-show="packageUrl" class="info-box">
+                <strong>Package URL:</strong><br>
+                <a :href="packageUrl" target="_blank" style="color: #333; text-decoration: underline;" x-text="packageUrl"></a>
+            </div>
+            
+            <div class="input-group">
+                <label>Common modifications needed:</label>
+                <div class="checkbox-group">
+                    <input type="checkbox" id="deps" x-model="modifications.dependencies" />
+                    <label for="deps">Add proper description and homepage URL</label>
+                </div>
+                <div class="checkbox-group">
+                    <input type="checkbox" id="optional" x-model="modifications.optional" />
+                    <label for="optional">Add git repository URL and license</label>
+                </div>
+                <div class="checkbox-group">
+                    <input type="checkbox" id="patches" x-model="modifications.patches" />
+                    <label for="patches">Add version with commit hash</label>
+                </div>
+                <div class="checkbox-group">
+                    <input type="checkbox" id="flags" x-model="modifications.buildFlags" />
+                    <label for="flags">Add dependencies to depends_on()</label>
+                </div>
+                <div class="checkbox-group">
+                    <input type="checkbox" id="class" x-model="modifications.classType" />
+                    <label for="class">Change class from Package to RPackage/PythonPackage</label>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Step 5: Build and Test -->
+        <div class="step" :class="{ active: currentStep === 5 }">
+            <h2 class="step-title">Step 5: Build and Test</h2>
+            
+            <div class="info-box">
+                Now let's build the package and test it:
+            </div>
+            
+            <div class="command-box">
+                <button class="copy-btn" @click="copyToClipboard('spack install ' + getRecipeName())">Copy</button>
+                <span x-text="'spack install ' + getRecipeName()"></span>
+            </div>
+            
+            <div class="input-group">
+                <label>Was the build successful?</label>
+                <div class="radio-group">
+                    <div class="radio-option">
+                        <input type="radio" id="build-yes" x-model="buildSuccess" value="yes" />
+                        <label for="build-yes">Yes, built successfully</label>
+                    </div>
+                    <div class="radio-option">
+                        <input type="radio" id="build-no" x-model="buildSuccess" value="no" />
+                        <label for="build-no">No, build failed</label>
+                    </div>
+                </div>
+            </div>
+            
+            <div x-show="buildSuccess === 'no'">
+                <div class="warning-box">
+                    <strong>Build Failed:</strong><br>
+                    • Read error logs carefully<br>
+                    • Add missing dependencies<br>
+                    • Fix version constraints<br>
+                    • Add patches if needed<br>
+                    • Modify build flags<br><br>
+                    Fix the recipe and try building again.
+                </div>
+            </div>
+            
+            <div x-show="buildSuccess === 'yes'">
+                <div class="success-box">
+                    ✅ Build successful! Now let's validate the package:
+                </div>
+                
+                <div class="info-box">
+                    <strong>Validation Steps:</strong><br>
+                    1. First, try the simple validation command below<br>
+                    2. If you get "matches multiple packages" error, use the selection command instead
+                </div>
+                
+                <div class="command-box">
+                    <button class="copy-btn" @click="copyToClipboard(getValidationCommand())">Copy</button>
+                    <span x-text="getValidationCommand()"></span>
+                </div>
+                
+                <div class="warning-box">
+                    <strong>If you get "matches multiple packages" error:</strong><br>
+                    Use this command with one of the hashes shown in the error message:
+                </div>
+                
+                <div class="command-box">
+                    <button class="copy-btn" @click="copyToClipboard(getValidationCommandWithSelection())">Copy</button>
+                    <span x-text="getValidationCommandWithSelection()"></span>
+                </div>
+                
+                <div class="input-group">
+                    <label>Was validation successful?</label>
+                    <div class="radio-group">
+                        <div class="radio-option">
+                            <input type="radio" id="valid-yes" x-model="validationSuccess" value="yes" />
+                            <label for="valid-yes">Yes, validation passed</label>
+                        </div>
+                        <div class="radio-option">
+                            <input type="radio" id="valid-no" x-model="validationSuccess" value="no" />
+                            <label for="valid-no">No, validation failed</label>
+                        </div>
+                    </div>
+                </div>
+                
+                <div x-show="validationSuccess === 'no'">
+                    <div class="command-box">
+                        <button class="copy-btn" @click="copyToClipboard('spack uninstall -y --all --dependents ' + getRecipeName())">Copy</button>
+                        <span x-text="'spack uninstall -y --all --dependents ' + getRecipeName()"></span>
+                    </div>
+                    
+                    <div class="warning-box">
+                        <strong>Validation Failed:</strong><br>
+                        • Check import paths<br>
+                        • Verify package installation<br>
+                        • Fix missing runtime dependencies<br><br>
+                        Fix the recipe and rebuild.
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Step 6: Create PR -->
+        <div class="step" :class="{ active: currentStep === 6 }">
+            <h2 class="step-title">Step 6: Create Pull Request</h2>
+            
+            <div class="success-box">
+                🎉 Congratulations! Your package builds and validates successfully.
+            </div>
+            
+            <div class="info-box">
+                Now create a pull request with these commands:
+            </div>
+            
+            <div class="command-box">
+                <button class="copy-btn" @click="copyToClipboard(getPrCommands())">Copy</button>
+                <span style="white-space: pre-line;" x-text="getPrCommands()"></span>
+            </div>
+            
+            <div class="warning-box">
+                <strong>Final Steps:</strong><br>
+                1. Create PR on GitHub<br>
+                2. Wait for GitHub Actions validation<br>
+                3. Address any review comments<br>
+                4. Merge when approved!
+            </div>
+            
+            <div class="input-group">
+                <label for="prUrl">PR URL (optional):</label>
+                <input type="url" id="prUrl" x-model="prUrl" 
+                       placeholder="https://github.com/your-org/spack-repo/pull/123" />
+            </div>
+        </div>
+        
+        <!-- Navigation -->
+        <div class="navigation">
+            <button class="btn btn-secondary" @click="previousStep()" 
+                    :disabled="currentStep === 1">Previous</button>
+            
+            <button class="btn" @click="nextStep()" 
+                    :disabled="!canProceed()" 
+                    x-text="currentStep === totalSteps ? 'Finish' : 'Next'"></button>
+        </div>
+    </div>
+</body>
+</html> 
