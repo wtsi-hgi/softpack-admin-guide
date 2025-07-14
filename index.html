@@ -659,8 +659,8 @@ echo "version(\\"$DATE\\", commit=\\"$COMMIT\\")"`;
                 
                 <div x-show="pypiSuccess === 'yes'">
                     <div class="command-box">
-                        <button class="copy-btn" @click="copyToClipboard($event.target.previousSibling.textContent)">Copy</button>del_empty
-mv ~/r-spack-recipe-builder/packages/py-* ~/spack-repo/packages
+                        <button class="copy-btn" @click="copyToClipboard('del_empty && mv ~/r-spack-recipe-builder/packages/py-* ~/spack-repo/packages')">Copy</button>
+                        <span>del_empty && mv ~/r-spack-recipe-builder/packages/py-* ~/spack-repo/packages</span>
                     </div>
                 </div>
             </div>
@@ -746,11 +746,17 @@ mv ~/r-spack-recipe-builder/packages/py-* ~/spack-repo/packages
         <div class="step" :class="{ active: currentStep === 4 }">
             <h2 class="step-title">Step 4: Gather Info and Modify Recipe</h2>
             
-            <div class="info-box">
+            <div x-show="packageType === 'python' && pypiSuccess === 'yes'" class="success-box">
+                ✅ <strong>PyPackageCreator was used successfully!</strong><br><br>
+                The recipe has been automatically generated with most common modifications already applied.
+                <br><br>
+            </div>
+            
+            <div x-show="packageType !== 'python' || pypiSuccess === 'no'" class="info-box">
                 Now you need to research the package and add proper dependencies to the recipe.
             </div>
             
-            <div class="warning-box">
+            <div x-show="packageType !== 'python' || pypiSuccess === 'no'" class="warning-box">
                 <strong>Study Examples:</strong><br>
                 • Python: <a href="https://github.com/wtsi-hgi/spack-repo/tree/main/packages/py-agate/package.py" target="_blank" style="color: #333; text-decoration: underline;"><code>py-agate</code></a><br>
                 • R: <a href="https://github.com/wtsi-hgi/spack-repo/tree/main/packages/r-archr/package.py" target="_blank" style="color: #333; text-decoration: underline;"><code>r-archr</code></a>, <a href="https://github.com/wtsi-hgi/spack-repo/tree/main/packages/r-plotlistr/package.py" target="_blank" style="color: #333; text-decoration: underline;"><code>r-plotlistr</code></a><br>
@@ -766,25 +772,34 @@ mv ~/r-spack-recipe-builder/packages/py-* ~/spack-repo/packages
             <div class="input-group">
                 <label>Common modifications needed:</label>
                 <div class="checkbox-group">
-                    <input type="checkbox" id="deps" x-model="modifications.dependencies" />
+                    <input type="checkbox" id="deps" x-model="modifications.dependencies" 
+                           :checked="packageType === 'python' && pypiSuccess === 'yes'" />
                     <label for="deps">Add proper description and homepage URL</label>
                 </div>
                 <div class="checkbox-group">
-                    <input type="checkbox" id="optional" x-model="modifications.optional" />
+                    <input type="checkbox" id="optional" x-model="modifications.optional" 
+                           :checked="packageType === 'python' && pypiSuccess === 'yes'" />
                     <label for="optional">Add git repository URL and license</label>
                 </div>
                 <div class="checkbox-group">
-                    <input type="checkbox" id="patches" x-model="modifications.patches" />
+                    <input type="checkbox" id="patches" x-model="modifications.patches" 
+                           :checked="packageType === 'python' && pypiSuccess === 'yes'" />
                     <label for="patches">Add version with commit hash</label>
                 </div>
                 <div class="checkbox-group">
-                    <input type="checkbox" id="flags" x-model="modifications.buildFlags" />
+                    <input type="checkbox" id="flags" x-model="modifications.buildFlags" 
+                           :checked="packageType === 'python' && pypiSuccess === 'yes'" />
                     <label for="flags">Add dependencies to depends_on()</label>
                 </div>
                 <div class="checkbox-group">
-                    <input type="checkbox" id="class" x-model="modifications.classType" />
+                    <input type="checkbox" id="class" x-model="modifications.classType" 
+                           :checked="packageType === 'python' && pypiSuccess === 'yes'" />
                     <label for="class">Change class from Package to RPackage/PythonPackage</label>
                 </div>
+            </div>
+            
+            <div x-show="packageType === 'python' && pypiSuccess === 'yes'" class="warning-box">
+                <strong>⚠️ Important:</strong> Even though PyPackageCreator handled most modifications, always verify the generated recipe for syntax errors and accuracy before proceeding to build.
             </div>
         </div>
         
